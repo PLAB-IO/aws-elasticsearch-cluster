@@ -1,0 +1,13 @@
+---
+packages:
+  - git
+  - make
+  - gettext
+  - python3-pip
+  - libffi-devel
+  - gcc
+  - python3-devel
+  - openssl11
+  - openssl11-devel
+  - htop
+  - aws-cfn-bootstrap

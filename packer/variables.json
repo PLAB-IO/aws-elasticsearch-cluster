@@ -1,0 +1,6 @@
+{
+  "source_ami": "ami-028a9d109dd58a23c",
+  "ssh_username": "ec2-user",
+  "region": "eu-west-1",
+  "build_instance_type": "t4g.small"
+}

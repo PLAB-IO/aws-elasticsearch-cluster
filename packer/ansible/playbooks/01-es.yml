@@ -1,0 +1,67 @@
+---
+- name: Install Elasticsearch 8
+  hosts: localhost
+  vars_files:
+    - var/default.yml
+  tasks:
+    - name: update the system
+      yum:
+        name: "*"
+        state: latest
+
+    - name: installation packages
+      yum:
+        name: "{{ item }}"
+        state: latest
+      loop: "{{ packages }}"
+
+    - name: Adding Elastic repository
+      yum_repository:
+        baseurl: https://artifacts.elastic.co/packages/8.x/yum
+        name: elasticsearch
+        description: Elastic repository
+        gpgkey: https://artifacts.elastic.co/GPG-KEY-elasticsearch
+
+    - name: install elasticsearch
+      yum:
+        name: elasticsearch
+
+    - name: reload systemd config
+      systemd: daemon_reload=yes
+
+    - name: enable service elasticsearch and ensure it is not masked
+      systemd:
+        name: elasticsearch
+        enabled: yes
+        masked: no
+
+    - name: set elasticsearch permissions
+      file:
+        path: /usr/share/elasticsearch
+        state: directory
+        recurse: yes
+        owner: elasticsearch
+        group: elasticsearch
+
+    - name: Add or modify memlock, both soft and hard, limit for elasticsearch user.
+      pam_limits:
+        domain: elasticsearch
+        limit_type: '-'
+        limit_item: memlock
+        value: unlimited
+        comment: unlimited memory lock for elasticsearch
+
+    - name: set LimitMEMLOCK to infinity.
+      lineinfile:
+        path: /usr/lib/systemd/system/elasticsearch.service
+        insertafter: 'LimitAS=infinity'
+        line: 'LimitMEMLOCK=infinity'
+        state: present
+
+    - name: set vm.max_map_count to 262144 in sysctl
+      sysctl: name={{ item.key }} value={{ item.value }}
+      with_items:
+        - { key: "vm.max_map_count", value: "262144" }
+
+    - name: For a permanent setting, update vm.max_map_count in /etc/sysctl.conf
+      command: sysctl -p /etc/sysctl.conf

@@ -1,0 +1,57 @@
+{
+  "variables": {
+    "profile"             : "{{env `AWS_PROFILE`}}",
+    "region"              : "{{env `AWS_REGION`}}",
+    "build_instance_type" : "{{env `AWS_INSTANCE_BUILD_TYPE`}}",
+    "source_ami"          : "{{env `AWS_SOURCE_AMI`}}",
+    "ssh_username"        : "{{env `AWS_SSH_USERNAME`}}",
+    "subnet_id"           : "{{env `AWS_BUILD_SUBNET`}}",
+    "version"             : "8.1"
+  },
+  "builders": [{
+    "type"                         : "amazon-ebs",
+    "force_deregister"             : true,
+    "force_delete_snapshot"        : true,
+    "associate_public_ip_address"  : true,
+    "profile"                      : "{{user `profile`}}",
+    "region"                       : "{{user `region`}}",
+    "instance_type"                : "{{user `build_instance_type`}}",
+    "source_ami"                   : "{{user `source_ami`}}",
+    "ssh_username"                 : "{{user `ssh_username`}}",
+    "ami_name"                     : "es-cluster-{{user `version`}}",
+    "ami_description"              : "Elasticsearch Node",
+    "subnet_id"                    : "{{user `subnet_id`}}",
+    "tags": {
+      "Name": "aws-es-cluster",
+      "version": "{{user `version`}}",
+      "SourceAmi": "{{user `source_ami`}}"
+    },
+    "run_tags"                     : {
+      "Name": "Packer Builder AWS-Elasticsearch-Cluster-Node",
+      "version": "{{user `version`}}",
+      "SourceAmi": "{{user `source_ami`}}"
+    }
+  }],
+  "provisioners": [
+    {
+      "type": "shell",
+      "inline": [
+        "sudo amazon-linux-extras install ansible2 -y"
+      ]
+    },
+    {
+      "type": "ansible-local",
+      "playbook_files": [
+        "./ansible/playbooks/01-es.yml"
+      ],
+      "playbook_dir": "./ansible/"
+    },
+    {
+      "type": "shell",
+      "inline": [
+        "sudo yum clean all",
+        "sudo rm -rf /var/cache/yum /var/log/lastlog /var/log/wtmp /var/log/btmp /var/log/cloud-init*"
+      ]
+    }
+  ]
+}
