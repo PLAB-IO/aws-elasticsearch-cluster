@@ -4,6 +4,9 @@ Parameters:
   VpcId:
     Description: VPC identifier
     Type: AWS::EC2::VPC::Id
+  VpcCidr:
+    Description: VPC Range IP
+    Type: String
   Subnet:
     Type: AWS::EC2::Subnet::Id
     Description: Public Subnet
@@ -33,6 +36,7 @@ Parameters:
     Type: String
 
 Resources:
+  ## MISSING CLIENT SECURITY GROUP
   EsMasterSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -42,11 +46,12 @@ Resources:
         - IpProtocol: tcp
           FromPort: 9200
           ToPort: 9200
-          CidrIp: 10.0.0.0/16
+          CidrIp: !Ref VpcCidr
+        ## MUST Replace 9300 by dedicated node security group
         - IpProtocol: tcp
           FromPort: 9300
           ToPort: 9300
-          CidrIp: 10.0.0.0/16
+          CidrIp: !Ref VpcCidr
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -109,6 +114,12 @@ Resources:
           echo "discovery.seed_hosts: [${SeedHosts}]" >> /etc/elasticsearch/elasticsearch.yml
           echo "cluster.initial_master_nodes: [${SeedHosts}]" >> /etc/elasticsearch/elasticsearch.yml
           echo "node.roles: master" >> /etc/elasticsearch/elasticsearch.yml
+
+          echo "xpack.security.enabled: false" >> /etc/elasticsearch/elasticsearch.yml
+          echo "xpack.security.transport.ssl.enabled: false" >> /etc/elasticsearch/elasticsearch.yml
+          echo "xpack.security.transport.ssl.keystore.path: /etc/elasticsearch/certs/transport.p12" >> /etc/elasticsearch/elasticsearch.yml
+          echo "xpack.security.http.ssl.enabled: false" >> /etc/elasticsearch/elasticsearch.yml
+          echo "xpack.security.http.ssl.keystore.path: /etc/elasticsearch/certs/http.p12" >> /etc/elasticsearch/elasticsearch.yml
 
           service elasticsearch start
           systemctl status elasticsearch.service

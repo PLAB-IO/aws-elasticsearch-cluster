@@ -5,8 +5,6 @@ Description: AWS-ElasticSearch-Cluster
 Parameters:
   VpcId:
     Type: AWS::EC2::VPC::Id
-  PublicSubnets:
-    Type: List<AWS::EC2::Subnet::Id>
   PrivateSubnets:
     Type: List<AWS::EC2::Subnet::Id>
   AvailabilityZones:
@@ -53,6 +51,7 @@ Resources:
       TemplateURL: es/master.yml
       Parameters:
         VpcId: !Ref VpcId
+        VpcCidr: 10.0.0.0/16
         Subnet: !Select [0, !Ref PrivateSubnets]
         AmiId: !Ref AmiId
         KeyPair: !Ref KeyPair
@@ -70,6 +69,7 @@ Resources:
       TemplateURL: es/master.yml
       Parameters:
         VpcId: !Ref VpcId
+        VpcCidr: 10.0.0.0/16
         Subnet: !Select [1, !Ref PrivateSubnets]
         AmiId: !Ref AmiId
         KeyPair: !Ref KeyPair
@@ -87,6 +87,7 @@ Resources:
       TemplateURL: es/master.yml
       Parameters:
         VpcId: !Ref VpcId
+        VpcCidr: 10.0.0.0/16
         Subnet: !Select [2, !Ref PrivateSubnets]
         AmiId: !Ref AmiId
         KeyPair: !Ref KeyPair
@@ -100,35 +101,37 @@ Resources:
   ## Create multiple pool depending the resilience we want.
   ## Having non-spot for prod is recommended
 
-#  EsClusterDataStack:
-#    Type: AWS::CloudFormation::Stack
-#    DependsOn: EsMaster1Stack
-#    Properties:
-#      TemplateURL: es/data.yml
-#      Parameters:
-#        VpcId: !Ref VpcId
-#        Subnets: !Ref PrivateSubnets
-#        AvailabilityZones: !Ref AvailabilityZones
-#        AmiId: !Ref AmiId
-#        KeyPair: !Ref KeyPair
-#        BastionSecurityGroupId: !Ref BastionSecurityGroupId
-#        InstanceType: !Ref DataInstanceType
-#        SeedHosts: !GetAtt ParameterStack.Outputs.SeedHosts
-#        ClusterName: !Ref ClusterName
-#        PrivateHostedZoneName: !Ref PrivateHostedZoneName
-#        MinSize: 3
-#        MaxSize: 5
-#
-#  KibanaStack:
-#    Type: AWS::CloudFormation::Stack
-#    DependsOn: EsClusterDataStack
-#    Condition: KibanaEnabled
-#    Properties:
-#      TemplateURL: es/kibana.yml
-#      Parameters:
-#        VpcId: !Ref VpcId
-#        Subnet: !Select [0, !Split [",", !Ref PublicSubnets]]
-#        KeyPair: !Ref KeyPair
-#        BastionSecurityGroupId: !Ref BastionSecurityGroupId
-#        BaseDomain: !Ref BaseDomain
-#        EsNodeHost: !Sub "http://es.${PrivateHostedZoneName}:9200"
+  EsClusterDataStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: EsMaster1Stack
+    Properties:
+      TemplateURL: es/data.yml
+      Parameters:
+        VpcId: !Ref VpcId
+        VpcCidr: 10.0.0.0/16
+        Subnets: !Join [",", !Ref PrivateSubnets]
+        AvailabilityZones: !Join [",", !Ref AvailabilityZones]
+        AmiId: !Ref AmiId
+        KeyPair: !Ref KeyPair
+        BastionSecurityGroupId: !Ref BastionSecurityGroupId
+        InstanceSize: Small
+        SeedHosts: !GetAtt ParameterStack.Outputs.SeedHosts
+        ClusterName: !Ref ClusterName
+        PrivateHostedZoneName: !Ref PrivateHostedZoneName
+        MinSize: 3
+        MaxSize: 3
+
+  KibanaStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: EsClusterDataStack
+    Condition: KibanaEnabled
+    Properties:
+      TemplateURL: es/kibana.yml
+      Parameters:
+        VpcId: !Ref VpcId
+        VpcCidr: 10.0.0.0/16
+        Subnet: !Select [0, !Ref PrivateSubnets]
+        KeyPair: !Ref KeyPair
+        BastionSecurityGroupId: !Ref BastionSecurityGroupId
+        BaseDomain: !Ref BaseDomain
+        EsNodeHost: !Sub "http://es.${PrivateHostedZoneName}:9200"

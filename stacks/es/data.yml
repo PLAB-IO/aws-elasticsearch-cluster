@@ -10,6 +10,9 @@ Parameters:
   VpcId:
     Description: VPC identifier
     Type: String
+  VpcCidr:
+    Description: VPC Range IP
+    Type: String
   Subnets:
     Type: List<AWS::EC2::Subnet::Id>
     Description: Vpc Subnet list
@@ -34,6 +37,13 @@ Parameters:
       - XLarge
       - 2XLarge
       - 4XLarge
+  SeedHosts:
+    Description: "List of MASTER Host spaced with double quote and separated by comma"
+    Type: String
+  ClusterName:
+    Type: String
+  PrivateHostedZoneName:
+    Type: String
   MinSize:
     Description: Autoscalling Max size
     Type: Number
@@ -42,13 +52,6 @@ Parameters:
     Description: Autoscalling Min size
     Type: Number
     Default: 2
-  SeedHosts:
-    Description: "List of MASTER Host spaced with double quote and separated by comma"
-    Type: String
-  ClusterName:
-    Type: String
-  PrivateHostedZoneName:
-    Type: String
 
 Mappings:
   # ARM Graviton instance
@@ -98,6 +101,8 @@ Mappings:
       VolumeSize: 100
 
 Resources:
+  ## MISSING CLIENT SECURITY GROUP
+  ## MUST Replace 9300 by dedicated node security group
   EsDataSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -107,11 +112,11 @@ Resources:
         - IpProtocol: tcp
           FromPort: 9300
           ToPort: 9300
-          CidrIp: 10.0.0.0/16
+          CidrIp: !Ref VpcCidr
         - IpProtocol: tcp
           FromPort: 9200
           ToPort: 9200
-          CidrIp: 10.0.0.0/16
+          CidrIp: !Ref VpcCidr
       SecurityGroupEgress:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
@@ -127,8 +132,6 @@ Resources:
         SecurityGroupIds:
           - !GetAtt EsDataSecurityGroup.GroupId
           - !Ref BastionSecurityGroupId
-        InstanceMarketOptions:
-          MarketType: spot
         Monitoring:
           Enabled: true
         EbsOptimized: !FindInMap [Compute, !Ref InstanceSize, EbsOptimized]
@@ -149,10 +152,10 @@ Resources:
     
                 service elasticsearch stop
                 rm -rf /var/log/elasticsearch/* /var/lib/elasticsearch/*
-    
+
                 # Configure JVM memory heap ( should be less than half of instance memory size )
-                sed -i 's/-Xms1g/-Xms${JvmMemorySize}m/g' /etc/elasticsearch/jvm.options
-                sed -i 's/-Xmx1g/-Xmx${JvmMemorySize}m/g' /etc/elasticsearch/jvm.options
+                echo '-Xms${JvmMemorySize}m' >> /etc/elasticsearch/jvm.options.d/memory.options
+                echo '-Xmx${JvmMemorySize}m' >> /etc/elasticsearch/jvm.options.d/memory.options
     
                 echo "cluster.name: ${ClusterName}" > /etc/elasticsearch/elasticsearch.yml
                 echo "path.data: /var/lib/elasticsearch" >> /etc/elasticsearch/elasticsearch.yml
@@ -161,7 +164,13 @@ Resources:
                 echo "http.port: 9200" >> /etc/elasticsearch/elasticsearch.yml
                 echo "discovery.seed_hosts: [${SeedHosts}]" >> /etc/elasticsearch/elasticsearch.yml
                 echo "node.roles: [ data ]" >> /etc/elasticsearch/elasticsearch.yml
-    
+
+                echo "xpack.security.enabled: false" >> /etc/elasticsearch/elasticsearch.yml
+                echo "xpack.security.transport.ssl.enabled: false" >> /etc/elasticsearch/elasticsearch.yml
+                echo "xpack.security.transport.ssl.keystore.path: /etc/elasticsearch/certs/transport.p12" >> /etc/elasticsearch/elasticsearch.yml
+                echo "xpack.security.http.ssl.enabled: false" >> /etc/elasticsearch/elasticsearch.yml
+                echo "xpack.security.http.ssl.keystore.path: /etc/elasticsearch/certs/http.p12" >> /etc/elasticsearch/elasticsearch.yml
+
                 service elasticsearch start
                 systemctl status elasticsearch.service
     
@@ -190,10 +199,11 @@ Resources:
       HealthCheckType: EC2
       MixedInstancesPolicy:
         InstancesDistribution:
-          OnDemandBaseCapacity: 33
+          OnDemandPercentageAboveBaseCapacity: 33
         LaunchTemplate:
-          LaunchTemplateName: !Sub "LT-${AWS::StackName}"
-          Version: !GetAtt LaunchTemplate.LatestVersionNumber
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref LaunchTemplate
+            Version: !GetAtt LaunchTemplate.LatestVersionNumber
       MinSize: !Ref MinSize
       MaxSize: !Ref MaxSize
       DesiredCapacity: !Ref MinSize

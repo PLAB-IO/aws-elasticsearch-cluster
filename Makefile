@@ -45,7 +45,6 @@ deploy: package
 		--stack-name $(stack_name) \
 		--parameter-overrides \
 	  		VpcId=$(vpcId) \
-	  		PublicSubnets=$(publicSubnets) \
 	  		PrivateSubnets=$(privateSubnets) \
 	  		AvailabilityZones=$(availabilityZones) \
 			AmiId=$(elasticAmiId) \
