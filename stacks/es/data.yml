@@ -1,0 +1,243 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Data Nodes are responsible of processing index shard
+  Your should always have at least 2 nodes in production to reach cluster GREEN state
+  Having 0 nodes will consist in cluster RED state with unrecoverable data state
+  1 node will consist in yellow state. (could be tolerate briefly during instance loss)
+
+Parameters:
+  VpcId:
+    Description: VPC identifier
+    Type: String
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Vpc Subnet list
+  AvailabilityZones:
+    Description: Availability Zones
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+  AmiId:
+    Description: AMI id for instance
+    Type: AWS::EC2::Image::Id
+  KeyPair:
+    Type: String
+    Description: Knime Instance Key name
+  BastionSecurityGroupId:
+    Type: String
+  InstanceSize:
+    Description: EC2 instance size
+    Type: String
+    AllowedValues:
+      - Small
+      - Medium
+      - Large
+      - XLarge
+      - 2XLarge
+      - 4XLarge
+  MinSize:
+    Description: Autoscalling Max size
+    Type: Number
+    Default: 2
+  MaxSize:
+    Description: Autoscalling Min size
+    Type: Number
+    Default: 2
+  SeedHosts:
+    Description: "List of MASTER Host spaced with double quote and separated by comma"
+    Type: String
+  ClusterName:
+    Type: String
+  PrivateHostedZoneName:
+    Type: String
+
+Mappings:
+  # ARM Graviton instance
+  # Memory Size on MB allocated to JVM HEAP ( should be less than half of instance memory size )
+  Compute:
+    Small:
+      InstanceType: t4g.small
+      JvmMemorySize: 1000
+      EbsOptimized: false
+      EbsIops: 3000
+      EbsThroughput: 125
+      VolumeSize: 8
+    Medium:
+      InstanceType: m6g.medium
+      JvmMemorySize: 2000
+      EbsOptimized: false
+      EbsIops: 3000
+      EbsThroughput: 125
+      VolumeSize: 16
+    Large:
+      InstanceType: m6g.large
+      JvmMemorySize: 4000
+      EbsOptimized: true
+      EbsIops: 6000
+      EbsThroughput: 500
+      VolumeSize: 32
+    XLarge:
+      InstanceType: m6g.xlarge
+      JvmMemorySize: 8000
+      EbsOptimized: true
+      EbsIops: 6000
+      EbsThroughput: 500
+      VolumeSize: 64
+    2XLarge:
+      InstanceType: m6g.2xlarge
+      JvmMemorySize: 16000
+      EbsOptimized: true
+      EbsIops: 16000
+      EbsThroughput: 1000
+      VolumeSize: 100
+    4XLarge:
+      InstanceType: m6g.4xlarge
+      JvmMemorySize: 32000
+      EbsOptimized: true
+      EbsIops: 16000
+      EbsThroughput: 1000
+      VolumeSize: 100
+
+Resources:
+  EsDataSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Elastic Data Security Group"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 9300
+          ToPort: 9300
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 9200
+          ToPort: 9200
+          CidrIp: 10.0.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "LT-${AWS::StackName}"
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !FindInMap [Compute, !Ref InstanceSize, InstanceType]
+        KeyName: !Ref KeyPair
+        SecurityGroupIds:
+          - !GetAtt EsDataSecurityGroup.GroupId
+          - !Ref BastionSecurityGroupId
+        InstanceMarketOptions:
+          MarketType: spot
+        Monitoring:
+          Enabled: true
+        EbsOptimized: !FindInMap [Compute, !Ref InstanceSize, EbsOptimized]
+        BlockDeviceMappings:
+          - Ebs:
+              VolumeSize: !FindInMap [Compute, !Ref InstanceSize, VolumeSize]
+              VolumeType: gp3
+              Iops: !FindInMap [Compute, !Ref InstanceSize, EbsIops]
+              Throughput: !FindInMap [Compute, !Ref InstanceSize, EbsThroughput]
+              DeleteOnTermination: true
+              Encrypted: true
+            DeviceName: /dev/xvda
+        UserData:
+          "Fn::Base64":
+            !Sub
+              - |
+                #!/bin/bash -xe
+    
+                service elasticsearch stop
+                rm -rf /var/log/elasticsearch/* /var/lib/elasticsearch/*
+    
+                # Configure JVM memory heap ( should be less than half of instance memory size )
+                sed -i 's/-Xms1g/-Xms${JvmMemorySize}m/g' /etc/elasticsearch/jvm.options
+                sed -i 's/-Xmx1g/-Xmx${JvmMemorySize}m/g' /etc/elasticsearch/jvm.options
+    
+                echo "cluster.name: ${ClusterName}" > /etc/elasticsearch/elasticsearch.yml
+                echo "path.data: /var/lib/elasticsearch" >> /etc/elasticsearch/elasticsearch.yml
+                echo "path.logs: /var/log/elasticsearch" >> /etc/elasticsearch/elasticsearch.yml
+                echo "network.host: 0.0.0.0" >> /etc/elasticsearch/elasticsearch.yml
+                echo "http.port: 9200" >> /etc/elasticsearch/elasticsearch.yml
+                echo "discovery.seed_hosts: [${SeedHosts}]" >> /etc/elasticsearch/elasticsearch.yml
+                echo "node.roles: [ data ]" >> /etc/elasticsearch/elasticsearch.yml
+    
+                service elasticsearch start
+                systemctl status elasticsearch.service
+    
+                /opt/aws/bin/cfn-signal -e $? --stack '${AWS::StackName}' --region '${AWS::Region}' --resource AutoScalingGroup
+              -
+                JvmMemorySize: !FindInMap [Compute, !Ref InstanceSize, JvmMemorySize]
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT5M
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: true
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime : PT5M
+        WaitOnResourceSignals: true
+    Properties:
+      Cooldown: 600
+      HealthCheckGracePeriod: 300
+      AvailabilityZones: !Ref AvailabilityZones
+      VPCZoneIdentifier: !Ref Subnets
+      HealthCheckType: EC2
+      MixedInstancesPolicy:
+        InstancesDistribution:
+          OnDemandBaseCapacity: 33
+        LaunchTemplate:
+          LaunchTemplateName: !Sub "LT-${AWS::StackName}"
+          Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      DesiredCapacity: !Ref MinSize
+      TerminationPolicies:
+        - OldestInstance
+      Tags:
+        - Key: Name
+          Value: !Sub "es-data-${ClusterName}"
+          PropagateAtLaunch: 'true'
+
+  UpdateRecordSetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Upgrade RecordSet of Elastic Cluster
+      CodeUri: update_recordset_function/
+      Handler: main.handler
+      Runtime: python3.8
+      Timeout: 15
+      Environment:
+        Variables:
+          PrivateHostedZoneName: !Ref PrivateHostedZoneName
+          EsDomain: !Sub "es.${PrivateHostedZoneName}"
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - ec2:Describe*
+                - autoscaling:DescribeAutoScalingGroups
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - route53:*
+              Resource: "*"
+      Events:
+        UpdateRecord:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - aws.autoscaling
+              detail-type:
+                - EC2 Instance Launch Successful
+                - EC2 Instance Terminate Successful
+              detail:
+                AutoScalingGroupName:
+                  - !Ref AutoScalingGroup

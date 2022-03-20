@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AWS-ElasticSearch-Cluster
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  PublicSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+  PrivateSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+  AvailabilityZones:
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+  AmiId:
+    Type: String
+  KeyPair:
+    Type: String
+  BastionSecurityGroupId:
+    Type: String
+  DataInstanceType:
+    Type: String
+  ClusterName:
+    Type: String
+  PrivateHostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+  PrivateHostedZoneName:
+    Type: String
+  BaseDomain:
+    Type: String
+  EnableMasterHa:
+    Type: String
+    Default: "false"
+  EnableKibana:
+    Type: String
+    Default: "false"
+
+Conditions:
+  KibanaEnabled: !Equals [ "true", !Ref EnableKibana ]
+  MasterHaEnabled: !Equals [ "true", !Ref EnableMasterHa ]
+
+Resources:
+  ParameterStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: parameter.yml
+      Parameters:
+        PrivateHostedZoneName: !Ref PrivateHostedZoneName
+        EnableMasterHa: !Ref EnableMasterHa
+
+  EsMaster1Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: es/master.yml
+      Parameters:
+        VpcId: !Ref VpcId
+        Subnet: !Select [0, !Ref PrivateSubnets]
+        AmiId: !Ref AmiId
+        KeyPair: !Ref KeyPair
+        BastionSecurityGroupId: !Ref BastionSecurityGroupId
+        InstanceType: t4g.micro
+        SeedHosts: !GetAtt ParameterStack.Outputs.SeedHosts
+        ClusterName: !Ref ClusterName
+        NodeName: !Sub "es01.${PrivateHostedZoneName}"
+        PrivateHostedZoneId: !Ref PrivateHostedZoneId
+
+  EsMaster2Stack:
+    Type: AWS::CloudFormation::Stack
+    Condition: MasterHaEnabled
+    Properties:
+      TemplateURL: es/master.yml
+      Parameters:
+        VpcId: !Ref VpcId
+        Subnet: !Select [1, !Ref PrivateSubnets]
+        AmiId: !Ref AmiId
+        KeyPair: !Ref KeyPair
+        BastionSecurityGroupId: !Ref BastionSecurityGroupId
+        InstanceType: t4g.micro
+        SeedHosts: !GetAtt ParameterStack.Outputs.SeedHosts
+        ClusterName: !Ref ClusterName
+        NodeName: !Sub "es02.${PrivateHostedZoneName}"
+        PrivateHostedZoneId: !Ref PrivateHostedZoneId
+
+  EsMaster3Stack:
+    Type: AWS::CloudFormation::Stack
+    Condition: MasterHaEnabled
+    Properties:
+      TemplateURL: es/master.yml
+      Parameters:
+        VpcId: !Ref VpcId
+        Subnet: !Select [2, !Ref PrivateSubnets]
+        AmiId: !Ref AmiId
+        KeyPair: !Ref KeyPair
+        BastionSecurityGroupId: !Ref BastionSecurityGroupId
+        InstanceType: t4g.micro
+        SeedHosts: !GetAtt ParameterStack.Outputs.SeedHosts
+        ClusterName: !Ref ClusterName
+        NodeName: !Sub "es03.${PrivateHostedZoneName}"
+        PrivateHostedZoneId: !Ref PrivateHostedZoneId
+
+  ## Create multiple pool depending the resilience we want.
+  ## Having non-spot for prod is recommended
+
+#  EsClusterDataStack:
+#    Type: AWS::CloudFormation::Stack
+#    DependsOn: EsMaster1Stack
+#    Properties:
+#      TemplateURL: es/data.yml
+#      Parameters:
+#        VpcId: !Ref VpcId
+#        Subnets: !Ref PrivateSubnets
+#        AvailabilityZones: !Ref AvailabilityZones
+#        AmiId: !Ref AmiId
+#        KeyPair: !Ref KeyPair
+#        BastionSecurityGroupId: !Ref BastionSecurityGroupId
+#        InstanceType: !Ref DataInstanceType
+#        SeedHosts: !GetAtt ParameterStack.Outputs.SeedHosts
+#        ClusterName: !Ref ClusterName
+#        PrivateHostedZoneName: !Ref PrivateHostedZoneName
+#        MinSize: 3
+#        MaxSize: 5
+#
+#  KibanaStack:
+#    Type: AWS::CloudFormation::Stack
+#    DependsOn: EsClusterDataStack
+#    Condition: KibanaEnabled
+#    Properties:
+#      TemplateURL: es/kibana.yml
+#      Parameters:
+#        VpcId: !Ref VpcId
+#        Subnet: !Select [0, !Split [",", !Ref PublicSubnets]]
+#        KeyPair: !Ref KeyPair
+#        BastionSecurityGroupId: !Ref BastionSecurityGroupId
+#        BaseDomain: !Ref BaseDomain
+#        EsNodeHost: !Sub "http://es.${PrivateHostedZoneName}:9200"

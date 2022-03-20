@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  VpcId:
+    Description: VPC identifier
+    Type: AWS::EC2::VPC::Id
+  Subnet:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public Subnet
+  AmiId:
+    Description: AMI id for instance
+    Type: AWS::EC2::Image::Id
+  KeyPair:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Knime Instance Key name
+  BastionSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t4g.micro
+  JvmMemorySize:
+    Description: Memory Size on MB allocated to JVM HEAP ( should be less than half of instance memory size )
+    Type: Number
+    Default: 400
+  SeedHosts:
+    Type: String
+  ClusterName:
+    Type: String
+  NodeName:
+    Type: String
+  PrivateHostedZoneId:
+    Type: String
+
+Resources:
+  EsMasterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Elastic Master Security Group"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 9200
+          ToPort: 9200
+          CidrIp: 10.0.0.0/16
+        - IpProtocol: tcp
+          FromPort: 9300
+          ToPort: 9300
+          CidrIp: 10.0.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  MasterEsInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPair
+      ImageId: !Ref AmiId
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+            Iops: 3000
+            DeleteOnTermination: true
+            Encrypted: true
+        # mount on /var/lib/elasticsearch
+        - DeviceName: /dev/sdb
+          Ebs:
+            VolumeSize: 8
+            VolumeType: gp3
+            Iops: 3000
+            DeleteOnTermination: false
+            Encrypted: true
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref EsMasterSecurityGroup
+            - !Ref BastionSecurityGroupId
+          SubnetId: !Ref Subnet
+      Tags:
+        - Key: Name
+          Value: !Ref NodeName
+      UserData:
+        "Fn::Base64":
+          !Sub |
+          #!/bin/bash -xe
+
+          service elasticsearch stop
+          rm -rf /var/log/elasticsearch/* /var/lib/elasticsearch/*
+          mkfs -t xfs /dev/nvme1n1
+          xfs_admin -L esdata /dev/nvme1n1
+          mount /dev/nvme1n1 /var/lib/elasticsearch
+          chown -R elasticsearch:root /var/lib/elasticsearch/
+          echo "LABEL=esdata /var/lib/elasticsearch               xfs  defaults,nofail  0  2" >> /etc/fstab
+
+          # Configure JVM memory heap ( should be less than half of instance memory size )
+          echo '-Xms${JvmMemorySize}m' >> /etc/elasticsearch/jvm.options.d/memory.options
+          echo '-Xmx${JvmMemorySize}m' >> /etc/elasticsearch/jvm.options.d/memory.options
+
+          echo "cluster.name: ${ClusterName}" > /etc/elasticsearch/elasticsearch.yml
+          echo "node.name: ${NodeName}" >> /etc/elasticsearch/elasticsearch.yml
+          echo "path.data: /var/lib/elasticsearch" >> /etc/elasticsearch/elasticsearch.yml
+          echo "path.logs: /var/log/elasticsearch" >> /etc/elasticsearch/elasticsearch.yml
+          echo "network.host: 0.0.0.0" >> /etc/elasticsearch/elasticsearch.yml
+          echo "http.port: 9200" >> /etc/elasticsearch/elasticsearch.yml
+          echo "discovery.seed_hosts: [${SeedHosts}]" >> /etc/elasticsearch/elasticsearch.yml
+          echo "cluster.initial_master_nodes: [${SeedHosts}]" >> /etc/elasticsearch/elasticsearch.yml
+          echo "node.roles: master" >> /etc/elasticsearch/elasticsearch.yml
+
+          service elasticsearch start
+          systemctl status elasticsearch.service
+
+  lanRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref PrivateHostedZoneId
+      Name: !Ref NodeName
+      ResourceRecords:
+        - !GetAtt MasterEsInstance.PrivateIp
+      TTL: '300'
+      Type: A
