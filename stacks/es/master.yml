@@ -34,6 +34,8 @@ Parameters:
     Type: String
   PrivateHostedZoneId:
     Type: String
+  MasterS3BackupRole:
+    Type: String
 
 Resources:
   ## MISSING CLIENT SECURITY GROUP
@@ -56,9 +58,17 @@ Resources:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
 
+  Profile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref MasterS3BackupRole
+
   MasterEsInstance:
     Type: AWS::EC2::Instance
     Properties:
+      IamInstanceProfile: !Ref Profile
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyPair
       ImageId: !Ref AmiId

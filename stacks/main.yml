@@ -31,6 +31,8 @@ Parameters:
   EnableKibana:
     Type: String
     Default: "false"
+  SnapshotS3BucketName:
+    Type: String
 
 Conditions:
   KibanaEnabled: !Equals [ "true", !Ref EnableKibana ]
@@ -44,6 +46,32 @@ Resources:
       Parameters:
         PrivateHostedZoneName: !Ref PrivateHostedZoneName
         EnableMasterHa: !Ref EnableMasterHa
+
+  MasterS3BackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: s3-snapshot
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: !Sub "arn:aws:s3:::${SnapshotS3BucketName}"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "arn:aws:s3:::${SnapshotS3BucketName}/*"
 
   EsMaster1Stack:
     Type: AWS::CloudFormation::Stack
@@ -61,6 +89,7 @@ Resources:
         ClusterName: !Ref ClusterName
         NodeName: !Sub "es01.${PrivateHostedZoneName}"
         PrivateHostedZoneId: !Ref PrivateHostedZoneId
+        MasterS3BackupRole: !Ref MasterS3BackupRole
 
   EsMaster2Stack:
     Type: AWS::CloudFormation::Stack
@@ -79,6 +108,7 @@ Resources:
         ClusterName: !Ref ClusterName
         NodeName: !Sub "es02.${PrivateHostedZoneName}"
         PrivateHostedZoneId: !Ref PrivateHostedZoneId
+        MasterS3BackupRole: !Ref MasterS3BackupRole
 
   EsMaster3Stack:
     Type: AWS::CloudFormation::Stack
@@ -97,6 +127,7 @@ Resources:
         ClusterName: !Ref ClusterName
         NodeName: !Sub "es03.${PrivateHostedZoneName}"
         PrivateHostedZoneId: !Ref PrivateHostedZoneId
+        MasterS3BackupRole: !Ref MasterS3BackupRole
 
   ## Create multiple pool depending the resilience we want.
   ## Having non-spot for prod is recommended

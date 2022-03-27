@@ -86,16 +86,6 @@ Resources:
         - IpProtocol: -1
           CidrIp: 0.0.0.0/0
 
-  Xface:
-    Type: AWS::EC2::NetworkInterface
-    Properties:
-      SubnetId: !Ref Subnet
-      Description: Interface for public access
-      GroupSet:
-        - !Ref EsKibanaSecurityGroup
-        - !Ref BastionSecurityGroupId
-      SourceDestCheck: false
-
   KibanaEsInstance:
     Type: AWS::EC2::Instance
     Properties:

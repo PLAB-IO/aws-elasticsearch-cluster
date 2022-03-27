@@ -56,7 +56,8 @@ deploy: package
 			PrivateHostedZoneName=$(privateDomain) \
 			BaseDomain=$(baseDomain) \
 			EnableMasterHa=$(enableMasterHa) \
-			EnableKibana=$(enableKibana)
+			EnableKibana=$(enableKibana) \
+			SnapshotS3BucketName=$(snapshotS3BucketName)
 
 clean:
 	rm -rf .aws-sam main.template
